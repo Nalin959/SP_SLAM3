@@ -84,14 +84,7 @@ SPextractor::SPextractor(int _nfeatures, float _scaleFactor, int _nlevels,
     nfeatures(_nfeatures), scaleFactor(_scaleFactor), nlevels(_nlevels),
     iniThFAST(_iniThFAST), minThFAST(_minThFAST)
 {
-    model = make_shared<SuperPoint>();
-    torch::Device load_device = torch::cuda::is_available() ? torch::kCUDA : torch::kCPU;
-    {
-        std::lock_guard<std::mutex> lock(LightGlue::getInferenceMutex());
-        torch::load(model, "superpoint.pt", load_device);
-        model->to(load_device);
-        model->eval();
-    }
+    model = make_shared<SuperPoint>("superpoint.engine");
 
     mvScaleFactor.resize(nlevels);
     mvLevelSigma2.resize(nlevels);
@@ -436,9 +429,7 @@ void SPextractor::ComputeKeyPointsOctTree(vector<vector<KeyPoint> >& allKeypoint
         cv::Mat desc;
         detector.computeDescriptors(keypoints, desc);
 
-        // Ensure all GPU operations complete before releasing mutex
-        if (torch::cuda::is_available())
-            torch::cuda::synchronize();
+    // Ensure GPU operations are handled correctly internally
 
         if (!desc.empty())
         {

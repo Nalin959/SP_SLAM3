@@ -469,8 +469,7 @@ public:
     DBoW3::BowVector mBowVec;
     DBoW3::FeatureVector mFeatVec;
 
-    // Global descriptor for place recognition (NetVLAD/CosPlace)
-    torch::Tensor mGlobalDescriptor;
+    cv::Mat mGlobalDescriptor;
 
     // Pose relative to parent (this is computed when bad flag is activated)
     cv::Mat mTcp;

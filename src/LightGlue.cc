@@ -1,61 +1,45 @@
 #include "LightGlue.h"
 #include <iostream>
+#include <cuda_runtime_api.h>
 
 namespace ORB_SLAM3
 {
 
-LightGlue::LightGlue(const std::string &model_path, bool use_cuda, bool use_fp16)
-    : mDevice(torch::kCPU), mbLoaded(false), mbFP16(use_fp16)
+LightGlue::LightGlue(const std::string &engine_path) 
+    : mbLoaded(false), max_kpts(1024)
 {
-    if (use_cuda && torch::cuda::is_available())
-        mDevice = torch::Device(torch::kCUDA);
+    trt_model = std::make_shared<TRTModel>(engine_path);
+    if (!trt_model->getEngine()) {
+        std::cerr << "Failed to load LightGlue TensorRT engine: " << engine_path << std::endl;
+        return;
+    }
+    
+    cudaStreamCreate(&stream);
+    
+    // Allocate GPU buffers for max_kpts
+    // kpts0: 1 x max_kpts x 2 (float32)
+    cudaMalloc(&buffers[0], 1 * max_kpts * 2 * sizeof(float));
+    // kpts1: 1 x max_kpts x 2 (float32)
+    cudaMalloc(&buffers[1], 1 * max_kpts * 2 * sizeof(float));
+    // desc0: 1 x max_kpts x 256 (float32)
+    cudaMalloc(&buffers[2], 1 * max_kpts * 256 * sizeof(float));
+    // desc1: 1 x max_kpts x 256 (float32)
+    cudaMalloc(&buffers[3], 1 * max_kpts * 256 * sizeof(float));
+    // matches0: max_kpts x 2 (int32_t)
+    cudaMalloc(&buffers[4], max_kpts * 2 * sizeof(int32_t));
+    // scores0: max_kpts (float32)
+    cudaMalloc(&buffers[5], max_kpts * sizeof(float));
 
-    try {
-        mModel = torch::jit::load(model_path, mDevice);
-        mModel.eval();
-
-        if (mbFP16 && mDevice.is_cuda())
-            mModel.to(torch::kFloat16);
-
+    if (trt_model->getContext()) {
         mbLoaded = true;
-        std::cout << "LightGlue model loaded from: " << model_path
-                  << " (device: " << (mDevice.is_cuda() ? "CUDA" : "CPU")
-                  << ", FP16: " << (mbFP16 && mDevice.is_cuda() ? "ON" : "OFF")
-                  << ")" << std::endl;
-    } catch (const c10::Error &e) {
-        std::cerr << "Failed to load LightGlue model: " << e.what() << std::endl;
-        mbLoaded = false;
     }
 }
 
-torch::Tensor LightGlue::normalizeKeypoints(const std::vector<cv::KeyPoint> &kpts,
-                                              const cv::Size &image_size)
-{
-    auto opts = torch::TensorOptions().dtype(torch::kFloat32);
-    torch::Tensor tensor = torch::zeros({(long)kpts.size(), 2}, opts);
-    auto accessor = tensor.accessor<float, 2>();
-
-    float w = (float)image_size.width;
-    float h = (float)image_size.height;
-
-    for (size_t i = 0; i < kpts.size(); i++) {
-        // Normalize to [-1, 1]
-        accessor[i][0] = 2.0f * kpts[i].pt.x / w - 1.0f;
-        accessor[i][1] = 2.0f * kpts[i].pt.y / h - 1.0f;
+LightGlue::~LightGlue() {
+    for (int i = 0; i < 6; ++i) {
+        if (buffers[i]) cudaFree(buffers[i]);
     }
-
-    return tensor;
-}
-
-torch::Tensor LightGlue::descriptorsToTensor(const cv::Mat &desc)
-{
-    auto tensor = torch::from_blob(
-        (void*)desc.data,
-        {desc.rows, desc.cols},
-        torch::kFloat32
-    ).clone();
-
-    return tensor;
+    cudaStreamDestroy(stream);
 }
 
 std::vector<LightGlueMatch> LightGlue::match(
@@ -70,62 +54,130 @@ std::vector<LightGlueMatch> LightGlue::match(
     if (!mbLoaded || kpts0.empty() || kpts1.empty())
         return matches;
 
-    // Serialize all GPU inference calls across threads
+    int N = std::min((int)kpts0.size(), max_kpts);
+    int M = std::min((int)kpts1.size(), max_kpts);
+
     std::lock_guard<std::mutex> lock(getInferenceMutex());
 
-    torch::NoGradGuard no_grad;
+    auto context = trt_model->getContext();
+    if (!context) return matches;
 
-    // Prepare inputs
-    auto kp0_tensor = normalizeKeypoints(kpts0, image_size).unsqueeze(0).to(mDevice);  // [1, N, 2]
-    auto kp1_tensor = normalizeKeypoints(kpts1, image_size).unsqueeze(0).to(mDevice);  // [1, M, 2]
-    auto desc0_tensor = descriptorsToTensor(desc0).unsqueeze(0).to(mDevice);            // [1, N, 256]
-    auto desc1_tensor = descriptorsToTensor(desc1).unsqueeze(0).to(mDevice);            // [1, M, 256]
+    // Set dynamic shapes
+    nvinfer1::Dims dims_kpts0{3, {1, N, 2}};
+    nvinfer1::Dims dims_kpts1{3, {1, M, 2}};
+    nvinfer1::Dims dims_desc0{3, {1, N, 256}};
+    nvinfer1::Dims dims_desc1{3, {1, M, 256}};
+    
+    context->setInputShape("kpts0", dims_kpts0);
+    context->setInputShape("kpts1", dims_kpts1);
+    context->setInputShape("desc0", dims_desc0);
+    context->setInputShape("desc1", dims_desc1);
 
-    if (mbFP16 && mDevice.is_cuda()) {
-        kp0_tensor = kp0_tensor.to(torch::kFloat16);
-        kp1_tensor = kp1_tensor.to(torch::kFloat16);
-        desc0_tensor = desc0_tensor.to(torch::kFloat16);
-        desc1_tensor = desc1_tensor.to(torch::kFloat16);
+    // Prepare host buffers
+    std::vector<float> h_kpts0(N * 2);
+    std::vector<float> h_kpts1(M * 2);
+    
+    float w = (float)image_size.width;
+    float h = (float)image_size.height;
+    
+    // PyTorch LightGlue normalizes by max(width, height) to preserve aspect ratio:
+    // shift = size / 2, scale = max(size) / 2
+    // kpts = (kpts - shift) / scale
+    float scale = std::max(w, h) / 2.0f;
+    float shift_x = w / 2.0f;
+    float shift_y = h / 2.0f;
+
+    for (int i = 0; i < N; ++i) {
+        h_kpts0[2*i] = (kpts0[i].pt.x - shift_x) / scale;
+        h_kpts0[2*i+1] = (kpts0[i].pt.y - shift_y) / scale;
+    }
+    for (int i = 0; i < M; ++i) {
+        h_kpts1[2*i] = (kpts1[i].pt.x - shift_x) / scale;
+        h_kpts1[2*i+1] = (kpts1[i].pt.y - shift_y) / scale;
     }
 
-    // Forward pass
-    // Expected TorchScript interface: forward(kpts0, kpts1, desc0, desc1) -> (matches, scores)
-    std::vector<torch::jit::IValue> inputs;
-    inputs.push_back(kp0_tensor);
-    inputs.push_back(kp1_tensor);
-    inputs.push_back(desc0_tensor);
-    inputs.push_back(desc1_tensor);
+    // Copy inputs to GPU
+    cudaMemcpyAsync(buffers[0], h_kpts0.data(), N * 2 * sizeof(float), cudaMemcpyHostToDevice, stream);
+    cudaMemcpyAsync(buffers[1], h_kpts1.data(), M * 2 * sizeof(float), cudaMemcpyHostToDevice, stream);
+    cudaMemcpyAsync(buffers[2], desc0.data, N * 256 * sizeof(float), cudaMemcpyHostToDevice, stream);
+    cudaMemcpyAsync(buffers[3], desc1.data, M * 256 * sizeof(float), cudaMemcpyHostToDevice, stream);
 
-    try {
-        auto output = mModel.forward(inputs);
+    context->setTensorAddress("kpts0", buffers[0]);
+    context->setTensorAddress("kpts1", buffers[1]);
+    context->setTensorAddress("desc0", buffers[2]);
+    context->setTensorAddress("desc1", buffers[3]);
+    context->setTensorAddress("matches0", buffers[4]);
+    context->setTensorAddress("scores0", buffers[5]);
 
-        // Parse output: expect a tuple of (match_indices [K, 2], match_scores [K])
-        auto output_tuple = output.toTuple();
-        auto match_indices = output_tuple->elements()[0].toTensor().to(torch::kCPU).to(torch::kInt32);
-        auto match_scores = output_tuple->elements()[1].toTensor().to(torch::kCPU).to(torch::kFloat32);
+    // Run inference
+    trt_model->enqueue(stream);
 
-        int num_matches = match_indices.size(0);
-        matches.reserve(num_matches);
+    // Get output shapes
+    nvinfer1::Dims match_dims = context->getTensorShape("matches0");
+    nvinfer1::Dims score_dims = context->getTensorShape("scores0");
 
-        auto idx_acc = match_indices.accessor<int, 2>();
-        auto score_acc = match_scores.accessor<float, 1>();
-
-        for (int i = 0; i < num_matches; i++) {
-            LightGlueMatch m;
-            m.idx0 = idx_acc[i][0];
-            m.idx1 = idx_acc[i][1];
-            m.score = score_acc[i];
-            matches.push_back(m);
+    // Determine actual number of match pairs
+    int K_matches = 0;
+    bool is_pair_format = false;
+    
+    if (match_dims.nbDims == 2 && match_dims.d[1] == 2) {
+        K_matches = match_dims.d[0];
+        is_pair_format = true;
+    } else if (match_dims.nbDims == 1) {
+        int flat_size = match_dims.d[0];
+        int score_size = (score_dims.nbDims >= 1) ? score_dims.d[0] : 0;
+        if (score_size > 0 && score_size == flat_size / 2) {
+            K_matches = score_size;
+            is_pair_format = true;
+        } else {
+            K_matches = flat_size;
+            is_pair_format = false;
         }
-    } catch (const c10::Error &e) {
-        std::cerr << "LightGlue inference failed: " << e.what() << std::endl;
     }
 
-    // Ensure all GPU operations complete before releasing mutex
-    if (mDevice.is_cuda())
-        torch::cuda::synchronize();
+    if (K_matches > 0 && K_matches <= max_kpts) {
+        if (is_pair_format) {
+            int total_elements = K_matches * 2;
+            std::vector<int32_t> h_matches(total_elements);
+            std::vector<float> h_scores(K_matches);
+            cudaMemcpyAsync(h_matches.data(), buffers[4], total_elements * sizeof(int32_t), cudaMemcpyDeviceToHost, stream);
+            cudaMemcpyAsync(h_scores.data(), buffers[5], K_matches * sizeof(float), cudaMemcpyDeviceToHost, stream);
+            cudaStreamSynchronize(stream);
+            matches.reserve(K_matches);
+            for (int i = 0; i < K_matches; ++i) {
+                int idx0 = (int)h_matches[2 * i];
+                int idx1 = (int)h_matches[2 * i + 1];
+                if (idx0 >= 0 && idx0 < N && idx1 >= 0 && idx1 < M) {
+                    LightGlueMatch m;
+                    m.idx0 = idx0;
+                    m.idx1 = idx1;
+                    m.score = h_scores[i];
+                    matches.push_back(m);
+                }
+            }
+        } else {
+            std::vector<int64_t> h_matches(K_matches);
+            std::vector<float> h_scores(K_matches);
+            cudaMemcpyAsync(h_matches.data(), buffers[4], K_matches * sizeof(int64_t), cudaMemcpyDeviceToHost, stream);
+            cudaMemcpyAsync(h_scores.data(), buffers[5], K_matches * sizeof(float), cudaMemcpyDeviceToHost, stream);
+            cudaStreamSynchronize(stream);
+            matches.reserve(K_matches);
+            for (int i = 0; i < K_matches; ++i) {
+                int idx1 = (int)h_matches[i];
+                if (idx1 >= 0 && idx1 < M) {
+                    LightGlueMatch m;
+                    m.idx0 = i;
+                    m.idx1 = idx1;
+                    m.score = h_scores[i];
+                    matches.push_back(m);
+                }
+            }
+        }
+    } else {
+        cudaStreamSynchronize(stream);
+    }
 
     return matches;
 }
 
-}  // namespace ORB_SLAM3
+} // namespace ORB_SLAM3

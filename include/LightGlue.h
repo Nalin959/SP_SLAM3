@@ -1,16 +1,12 @@
 #ifndef LIGHTGLUE_H
 #define LIGHTGLUE_H
 
-#include <torch/torch.h>
-#include <torch/script.h>
 #include <opencv2/opencv.hpp>
 #include <vector>
 #include <string>
 #include <mutex>
-
-#ifdef EIGEN_MPL2_ONLY
-#undef EIGEN_MPL2_ONLY
-#endif
+#include <memory>
+#include "TRTModel.h"
 
 namespace ORB_SLAM3
 {
@@ -23,7 +19,8 @@ struct LightGlueMatch {
 
 class LightGlue {
 public:
-    LightGlue(const std::string &model_path, bool use_cuda = true, bool use_fp16 = false);
+    LightGlue(const std::string &engine_path);
+    ~LightGlue();
 
     // Match two sets of keypoints + descriptors
     // keypoints: [N,2] (x,y) pixel coordinates
@@ -45,17 +42,11 @@ public:
     }
 
 private:
-    // Normalize keypoints to [-1, 1] range
-    torch::Tensor normalizeKeypoints(const std::vector<cv::KeyPoint> &kpts,
-                                     const cv::Size &image_size);
-
-    // Convert cv::Mat descriptors to Tensor
-    torch::Tensor descriptorsToTensor(const cv::Mat &desc);
-
-    torch::jit::script::Module mModel;
-    torch::Device mDevice;
+    std::shared_ptr<TRTModel> trt_model;
     bool mbLoaded;
-    bool mbFP16;
+    cudaStream_t stream;
+    void* buffers[6]; // kpts0, kpts1, desc0, desc1, matches0, scores0
+    int max_kpts;
 };
 
 }  // namespace ORB_SLAM3

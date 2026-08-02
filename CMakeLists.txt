@@ -11,14 +11,6 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS}  -Wall   -O3")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall   -O3")
 set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -march=native")
 set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -march=native")
-if(NOT DEFINED Torch_DIR)
-  if(DEFINED ENV{TORCH_DIR})
-    set(Torch_DIR $ENV{TORCH_DIR})
-  else()
-    set(Torch_DIR "/usr/local/libtorch/share/cmake/Torch")
-  endif()
-endif()
-find_package(Torch REQUIRED)
 
 include(CheckCXXCompilerFlag)
 set(CMAKE_CXX_STANDARD 17)
@@ -42,6 +34,7 @@ MESSAGE(${OpenCV_VERSION})
 find_package(Eigen3 3.1.0 REQUIRED)
 find_package(Pangolin REQUIRED)
 find_package(realsense2)
+find_package(CUDA REQUIRED)
 
 include_directories(
         ${PROJECT_SOURCE_DIR}
@@ -49,8 +42,18 @@ include_directories(
         ${PROJECT_SOURCE_DIR}/include/CameraModels
         ${EIGEN3_INCLUDE_DIR}
         ${Pangolin_INCLUDE_DIRS}
+        ${PROJECT_SOURCE_DIR}/Thirdparty/g2o/
         ${PROJECT_SOURCE_DIR}/Thirdparty/Sophus
 )
+
+find_path(TENSORRT_INCLUDE_DIR NvInfer.h)
+find_library(TENSORRT_LIBRARY nvinfer)
+if(TENSORRT_INCLUDE_DIR AND TENSORRT_LIBRARY)
+    message(STATUS "Found TensorRT: ${TENSORRT_LIBRARY}")
+    include_directories(${TENSORRT_INCLUDE_DIR})
+else()
+    message(WARNING "TensorRT not found, TRTModel may fail to compile if NvInfer.h is missing!")
+endif()
 
 add_compile_options(
     -Wno-unused-but-set-variable
@@ -66,7 +69,7 @@ add_definitions(-DUSE_ORBFEATURES=0)
 
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/lib)
 
-add_library(${PROJECT_NAME} SHARED
+cuda_add_library(${PROJECT_NAME} SHARED
         src/System.cc
         src/Tracking.cc
         src/LocalMapping.cc
@@ -74,9 +77,10 @@ add_library(${PROJECT_NAME} SHARED
 
         src/SPextractor.cc
         src/SPmatcher.cc
-	    src/SuperPoint.cc
+        src/SuperPoint.cc
         src/LightGlue.cc
         src/PlaceRecognition.cc
+        src/TRTModel.cc
 
         src/FrameDrawer.cc
         src/Converter.cc
@@ -137,17 +141,21 @@ add_library(${PROJECT_NAME} SHARED
         include/OptimizableTypes.h
         include/MLPnPsolver.h
         include/TwoViewReconstruction.h
-        src/TwoViewReconstruction.cc)
+        src/TwoViewReconstruction.cc
+        
+        src/cuda/SuperPoint.cu
+        src/cuda/PlaceRecognition.cu)
 
 add_subdirectory(Thirdparty/g2o)
 
 target_link_libraries(${PROJECT_NAME}
-	${TORCH_LIBRARIES}
         ${OpenCV_LIBS}
         ${EIGEN3_LIBS}
         ${Pangolin_LIBRARIES}
         ${PROJECT_SOURCE_DIR}/Thirdparty/DBoW3/lib/libDBoW3.so
         ${PROJECT_SOURCE_DIR}/Thirdparty/g2o/lib/libg2o.so
+        ${TENSORRT_LIBRARY}
+        ${CUDA_LIBRARIES}
         -lboost_serialization
         -lcrypto
         )
@@ -168,6 +176,10 @@ add_executable(mono_live
         Examples/Monocular/mono_live.cc)
 target_link_libraries(mono_live ${PROJECT_NAME} ${OpenCV_LIBS})
 
+add_executable(mono_video
+        Examples/Monocular/mono_video.cc)
+target_link_libraries(mono_video ${PROJECT_NAME} ${OpenCV_LIBS})
+
 add_executable(mono_euroc
         Examples/Monocular/mono_euroc.cc)
 target_link_libraries(mono_euroc ${PROJECT_NAME} ${OpenCV_LIBS})
@@ -175,6 +187,10 @@ target_link_libraries(mono_euroc ${PROJECT_NAME} ${OpenCV_LIBS})
 add_executable(mono_teknofest
         Examples/Monocular/mono_teknofest.cc)
 target_link_libraries(mono_teknofest ${PROJECT_NAME} ${OpenCV_LIBS})
+
+add_executable(benchmark_trt
+        benchmark_trt.cpp)
+target_link_libraries(benchmark_trt ${PROJECT_NAME} ${OpenCV_LIBS} ${CUDA_LIBRARIES})
 
 # Tools
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/tools)

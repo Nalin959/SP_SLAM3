@@ -1,50 +1,30 @@
 #ifndef SUPERPOINT_H
 #define SUPERPOINT_H
 
-
-#include <torch/torch.h>
 #include <opencv2/opencv.hpp>
-
 #include <vector>
-
-#ifdef EIGEN_MPL2_ONLY
-#undef EIGEN_MPL2_ONLY
-#endif
-
+#include <memory>
+#include "TRTModel.h"
 
 namespace ORB_SLAM3
 {
 
-struct SuperPoint : torch::nn::Module {
-  SuperPoint();
+class SuperPoint {
+public:
+    SuperPoint(const std::string& engine_path);
+    ~SuperPoint();
 
-  std::vector<torch::Tensor> forward(torch::Tensor x);
+    void forward(const cv::Mat& image, cv::Mat& prob);
+    void computeDescriptorsCUDA(const std::vector<cv::KeyPoint>& keypoints, cv::Mat& descriptors);
 
-
-  torch::nn::Conv2d conv1a;
-  torch::nn::Conv2d conv1b;
-
-  torch::nn::Conv2d conv2a;
-  torch::nn::Conv2d conv2b;
-
-  torch::nn::Conv2d conv3a;
-  torch::nn::Conv2d conv3b;
-
-  torch::nn::Conv2d conv4a;
-  torch::nn::Conv2d conv4b;
-
-  torch::nn::Conv2d convPa;
-  torch::nn::Conv2d convPb;
-
-  // descriptor
-  torch::nn::Conv2d convDa;
-  torch::nn::Conv2d convDb;
-
+private:
+    std::shared_ptr<TRTModel> trt_model;
+    void* buffers[4]; // 0: image, 1: prob, 2: desc, 3: prob_out_hw // 0: input, 1: prob, 2: desc
+    cudaStream_t stream;
+    int max_h, max_w;
+    int last_H, last_W;
+    bool mUseCLAHE;
 };
-
-
-cv::Mat SPdetect(std::shared_ptr<SuperPoint> model, cv::Mat img, std::vector<cv::KeyPoint> &keypoints, double threshold, bool nms, bool cuda);
-// torch::Tensor NMS(torch::Tensor kpts);
 
 class SPDetector {
 public:
@@ -55,11 +35,10 @@ public:
 
 private:
     std::shared_ptr<SuperPoint> model;
-    torch::Tensor mProb;
-    torch::Tensor mDesc;
+    cv::Mat mProb; // H x W probability map (CPU)
     bool mbFP16;
 };
 
-}  // ORB_SLAM
+}  // namespace ORB_SLAM3
 
 #endif

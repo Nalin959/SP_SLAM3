@@ -121,7 +121,7 @@ System::System(const string &strVocFile, const string &strSettingsFile, const eS
         if (!lgFP16Node.empty())
             lgUseFP16 = (int)lgFP16Node != 0;
 
-        auto pLightGlue = std::make_shared<LightGlue>(lgModelPath, lgUseCuda, lgUseFP16);
+        auto pLightGlue = std::make_shared<LightGlue>(lgModelPath);
         if (pLightGlue->isLoaded())
             SPmatcher::SetLightGlue(pLightGlue);
     }
@@ -154,7 +154,7 @@ System::System(const string &strVocFile, const string &strSettingsFile, const eS
         if (!prFP16Node.empty())
             prUseFP16 = (int)prFP16Node != 0;
 
-        auto pPlaceRecognition = std::make_shared<PlaceRecognition>(prModelPath, true, prUseFP16);
+        auto pPlaceRecognition = std::make_shared<PlaceRecognition>(prModelPath);
         if (pPlaceRecognition->isLoaded()) {
             mpTracker->mpPlaceRecognition = pPlaceRecognition;
             mpLoopCloser->SetPlaceRecognition(pPlaceRecognition);

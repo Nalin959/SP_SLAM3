@@ -464,8 +464,8 @@ bool LoopClosing::NewDetectCommonRegions()
     vector<KeyFrame*> vpMergeBowCand, vpLoopBowCand;
     if(!bMergeDetectedInKF || !bLoopDetectedInKF)
     {
-        if (mpPlaceRecognition && mpPlaceRecognition->isLoaded()
-            && mpCurrentKF->mGlobalDescriptor.numel() > 0)
+        if (mpPlaceRecognition && mpPlaceRecognition->isLoaded() 
+            && !mpCurrentKF->mGlobalDescriptor.empty())
         {
             // Learned place recognition path (NetVLAD/CosPlace)
             std::set<KeyFrame*> spConnected = mpCurrentKF->GetConnectedKeyFrames();
