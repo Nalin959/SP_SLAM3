@@ -72,8 +72,8 @@ __global__ void superpoint_desc_sample_kernel(
     // PyTorch grid_sample align_corners=True for SuperPoint
     // Python: grid = kpts / (W/2) - 1; grid_sample(align_corners=True)
     // px_grid = (grid + 1)/2 * (W8 - 1) = (kpt_x / W) * (W8 - 1)
-    float px = (kpt_x / (W8 * 8.0f)) * (W8 - 1.0f);
-    float py = (kpt_y / (H8 * 8.0f)) * (H8 - 1.0f);
+    float px = (kpt_x - 3.5f) / (W8 * 8.0f - 4.5f) * (W8 - 1.0f);
+    float py = (kpt_y - 3.5f) / (H8 * 8.0f - 4.5f) * (H8 - 1.0f);
 
     int x0 = floorf(px);
     int y0 = floorf(py);

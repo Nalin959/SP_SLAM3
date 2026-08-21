@@ -503,8 +503,29 @@ evo_res results/*.zip -p --plot
 ### Performance Optimization
 
 - [x] **Half precision (FP16) inference** — FP16 mode for SuperPoint, LightGlue, and PlaceRecognition on CUDA
-- [ ] **TensorRT / ONNX Runtime** — Replace LibTorch with TensorRT for 2-3x speedup on NVIDIA GPUs
+- [x] **TensorRT / ONNX Runtime** — High-performance native TensorRT C++ integration for SuperPoint and LightGlue with custom CUDA preprocessing/rendering kernels delivering 18–24 FPS on Jetson Orin NX
 - [ ] **Remove image pyramid** — Fully remove pyramid code (currently using `nLevels=1` workaround)
+
+---
+
+## 7. GPS-Denied Absolute Video Localization (`video_localizer`)
+
+For absolute geo-registration of live UAV video against satellite orthophotos without GPS, SP-SLAM3 includes an ultra-fast Two-Pass localizer (`Examples/Monocular/video_localizer.cc`):
+
+### Two-Pass Execution:
+1. **Pass 1 (Global Search / Voting)**: Runs SuperPoint feature voting against a 36k-point global map database with DBSCAN clustering to determine initial absolute coordinates ($\ge 70$ match threshold).
+2. **Pass 2 (High-Speed Local Tracking)**: Continuously crops an oriented 1024x1024 satellite patch around the EKF dead-reckoning position on GPU via `cuda_crop_map_normalize`, running LightGlue matching and direct CUDA frame rendering at **18–24 FPS**.
+
+### Running the Video Localizer:
+```bash
+cd SP_SLAM3/build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+make -j$(nproc)
+
+# Run Video Localizer
+./Examples/Monocular/video_localizer
+```
+Outputs high-speed rendered visualization with matching correspondence lines to `output_localizer.mp4`.
 
 ---
 

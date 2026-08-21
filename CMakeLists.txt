@@ -144,6 +144,7 @@ cuda_add_library(${PROJECT_NAME} SHARED
         src/TwoViewReconstruction.cc
         
         src/cuda/SuperPoint.cu
+        src/cuda/cuda_utils.cu
         src/cuda/PlaceRecognition.cu)
 
 add_subdirectory(Thirdparty/g2o)
@@ -191,6 +192,14 @@ target_link_libraries(mono_teknofest ${PROJECT_NAME} ${OpenCV_LIBS})
 add_executable(benchmark_trt
         benchmark_trt.cpp)
 target_link_libraries(benchmark_trt ${PROJECT_NAME} ${OpenCV_LIBS} ${CUDA_LIBRARIES})
+
+add_executable(video_localizer
+        Examples/Monocular/video_localizer.cc)
+target_link_libraries(video_localizer ${PROJECT_NAME} ${OpenCV_LIBS} ${CUDA_LIBRARIES} nvinfer)
+
+add_executable(video_localizer_orin
+        Examples/Monocular/video_localizer_orin.cc)
+target_link_libraries(video_localizer_orin ${PROJECT_NAME} ${OpenCV_LIBS} ${CUDA_LIBRARIES} nvinfer)
 
 # Tools
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/tools)

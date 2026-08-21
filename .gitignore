@@ -16,7 +16,20 @@ Thirdparty/g2o/lib/
 Examples/Monocular/mono_webcam
 Examples/Monocular/mono_live
 Examples/Monocular/mono_euroc
+Examples/Monocular/mono_video
+Examples/Monocular/mono_teknofest
+Examples/Monocular/video_localizer*
+Examples/Monocular/pipeline_localizer*
+Examples/Monocular/evaluate_v2_trt
+benchmark_trt
+convert_voc
+print_ekf
 tools/convert_vocab
+*.log
+*.engine
+*.mp4
+*.nsys-rep
+*.sqlite
 
 # Dataset folders
 Examples/Monocular/MH_01_easy

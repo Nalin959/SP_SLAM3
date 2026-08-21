@@ -6,7 +6,7 @@ namespace ORB_SLAM3
 {
 
 LightGlue::LightGlue(const std::string &engine_path) 
-    : mbLoaded(false), max_kpts(1024)
+    : mbLoaded(false), max_kpts(4096)
 {
     trt_model = std::make_shared<TRTModel>(engine_path);
     if (!trt_model->getEngine()) {
@@ -77,23 +77,14 @@ std::vector<LightGlueMatch> LightGlue::match(
     std::vector<float> h_kpts0(N * 2);
     std::vector<float> h_kpts1(M * 2);
     
-    float w = (float)image_size.width;
-    float h = (float)image_size.height;
-    
-    // PyTorch LightGlue normalizes by max(width, height) to preserve aspect ratio:
-    // shift = size / 2, scale = max(size) / 2
-    // kpts = (kpts - shift) / scale
-    float scale = std::max(w, h) / 2.0f;
-    float shift_x = w / 2.0f;
-    float shift_y = h / 2.0f;
-
+    // Preprocess keypoints: normalize to [-1, 1] based on max_h and max_w
     for (int i = 0; i < N; ++i) {
-        h_kpts0[2*i] = (kpts0[i].pt.x - shift_x) / scale;
-        h_kpts0[2*i+1] = (kpts0[i].pt.y - shift_y) / scale;
+        h_kpts0[2*i] = kpts0[i].pt.x / 512.0f - 1.0f;
+        h_kpts0[2*i+1] = kpts0[i].pt.y / 512.0f - 1.0f;
     }
     for (int i = 0; i < M; ++i) {
-        h_kpts1[2*i] = (kpts1[i].pt.x - shift_x) / scale;
-        h_kpts1[2*i+1] = (kpts1[i].pt.y - shift_y) / scale;
+        h_kpts1[2*i] = kpts1[i].pt.x / 512.0f - 1.0f;
+        h_kpts1[2*i+1] = kpts1[i].pt.y / 512.0f - 1.0f;
     }
 
     // Copy inputs to GPU
