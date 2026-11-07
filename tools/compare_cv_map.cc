@@ -4,7 +4,7 @@ using namespace cv;
 using namespace std;
 
 int main() {
-    Mat m_cuda = imread("/home/nalin/.gemini/antigravity-ide/brain/6dbbf1dd-9bd7-4d8f-acdd-ea959be51f1e/scratch/map_f.jpg", IMREAD_GRAYSCALE);
+    Mat m_cuda = imread("/home/nalin-sharma/.gemini/antigravity-ide/brain/6dbbf1dd-9bd7-4d8f-acdd-ea959be51f1e/scratch/map_f.jpg", IMREAD_GRAYSCALE);
 
     Mat ref_map = imread("../map_data/reference_map_2km.png", IMREAD_GRAYSCALE);
     int pad = 700;
