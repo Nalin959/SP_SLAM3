@@ -20,6 +20,7 @@ Examples/Monocular/mono_video
 Examples/Monocular/mono_teknofest
 Examples/Monocular/video_localizer*
 Examples/Monocular/pipeline_localizer*
+!Examples/Monocular/*.cc
 Examples/Monocular/evaluate_v2_trt
 benchmark_trt
 convert_voc
